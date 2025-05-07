@@ -14,9 +14,9 @@ use std::io;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-pub const ALPN: &[u8] = b"QFTv0";
-pub const MAX_QR_BYTES: usize = 2953;
+use qft::*;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FileTransfer {
@@ -89,7 +89,7 @@ async fn copy_from_quinn(
 //  * (maybe) append some kind of hash or CRC?
 // Receiver:
 //  * create endpoint
-//  * display QR code ("qtf-rx:<NodeAddr>")
+//  * display QR code ("qft-rx:<NodeAddr>")
 //  * listen on the endpoint, waiting for app to supply FT struct
 //  * connect to sender's endpoint, send token
 //  * receive the file over the connection (stream to disk)
@@ -128,7 +128,7 @@ async fn send_file(path: &str) -> Result<()> {
 
     println!("Sending {:?}", &transfer);
     let transfer_json = serde_json::to_string(&transfer)?;
-    let url = format!("qft-tx:{}", transfer_json);
+    let url = format!("{}{}", TX_PREFIX, transfer_json);
     println!("URL: {}", url);
 
     // Draw the UI
@@ -200,9 +200,9 @@ async fn receive_file() -> Result<()> {
         .bind()
         .await?;
 
-    //  * display QR code ("qtf-rx:<NodeAddr>")
+    //  * display QR code ("qft-rx:<NodeAddr>")
     let node_addr = endpoint.node_addr().await?;
-    let url = format!("qtf-rx:{}", serde_json::to_string(&node_addr)?);
+    let url = format!("{}{}", RX_PREFIX, serde_json::to_string(&node_addr)?);
 
     println!("URL: {}", url);
 
@@ -282,6 +282,11 @@ fn usage() -> ! {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let args: Vec<String> = env::args().collect();
     match args.len() {
         1 => receive_file().await,
