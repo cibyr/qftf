@@ -30,6 +30,13 @@ struct FileTransfer {
     token: [u8; 8],
 }
 
+struct Progress {
+    name: String,
+    bytes_sent: u64,
+    total_size: u64,
+    finished: bool
+}
+
 /// Copy from a reader to a quinn stream.
 ///
 /// Will send a reset to the other side if the operation is cancelled, and fail
@@ -145,6 +152,8 @@ async fn send_file(path: &str) -> Result<()> {
     wind.end();
     wind.show();
 
+    let (progress_sender, progress_receiver) = app::channel::<Progress>();
+
     tokio::spawn(async move {
         loop {
             let Some(connecting) = endpoint.accept().await else {
@@ -174,21 +183,44 @@ async fn send_file(path: &str) -> Result<()> {
             r.read_exact(&mut buf).await?;
             anyhow::ensure!(buf == transfer.token, "invalid token");
 
+            progress_sender.send(Progress {
+                name: transfer.name.clone(),
+                bytes_sent: 0,
+                total_size: transfer.size,
+                finished: false,
+            });
+
             // Send the file
             let token = CancellationToken::new();
             let _bytes_sent = copy_to_quinn(file, s, token).await?;
             // TODO: check bytes_sent, get rid of cancellation token?
             // TODO: progress
-            println!("Transfer complete!");
-            // TODO: close the UI
+            tracing::info!("Transfer complete!");
+            progress_sender.send(Progress {
+                name: transfer.name,
+                bytes_sent: transfer.size,
+                total_size: transfer.size,
+                finished: true,
+            });
+
             break;
         }
 
         Ok(())
     });
-    // TODO: care about the result from spawn
 
-    app.run().unwrap();
+    while app.wait() {
+        if let Some(progress) = progress_receiver.recv() {
+            if progress.finished {
+                app::quit();
+                break;
+            }
+
+            frame.set_image::<SvgImage>(None);
+            frame.set_label(&format!("Sending {}...", progress.name));
+        }
+    }
+
     println!("Done!");
     Ok(())
 }
@@ -219,6 +251,8 @@ async fn receive_file() -> Result<()> {
 
     wind.end();
     wind.show();
+
+    let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
     tokio::spawn(async move {
         loop {
@@ -258,19 +292,34 @@ async fn receive_file() -> Result<()> {
 
             //  * receive the file over the connection (stream to disk)
             let token = CancellationToken::new();
-            let f = File::create_new(transfer.name).await?;
+            let f = File::create_new(&transfer.name).await?;
             copy_from_quinn(r, f, token).await?;
             // TODO: progress
-            println!("Transfer complete!");
-            // TODO: close the UI
+            tracing::info!("Transfer complete!");
+            progress_sender.send(Progress {
+                name: transfer.name,
+                bytes_sent: transfer.size,
+                total_size: transfer.size,
+                finished: true,
+            });
             break;
         }
 
         Ok::<(), anyhow::Error>(())
     });
-    // TODO: care about if the task succeeds, or even finishes!
 
-    app.run().unwrap();
+    while app.wait() {
+        if let Some(progress) = progress_receiver.recv() {
+            if progress.finished {
+                app::quit();
+                break;
+            }
+
+            frame.set_image::<SvgImage>(None);
+            frame.set_label(&format!("Receiving {}...", progress.name));
+        }
+    }
+
     println!("Done!");
     Ok(())
 }
