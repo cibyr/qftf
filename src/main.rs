@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use qft::*;
+use qftf::*;
 
 const URL_PREFIX: &str = "https://rambunctiousness.com/qft/";
 
@@ -91,14 +91,14 @@ async fn copy_from_quinn(
 // Parse arguments (filename to send, no args to receive)
 // Sender:
 //  * create endpoint, stat file -> fill out FileTransfer struct
-//  * display QR code ("qft-tx:<encoded struct>")
+//  * display QR code ("qftf-tx:<encoded struct>")
 //  * listen on the endpoint, waiting for receiver to supply token
 //  * stream the file over the connection
 //    * (maybe) display progress
 //  * (maybe) append some kind of hash or CRC?
 // Receiver:
 //  * create endpoint
-//  * display QR code ("qft-rx:<NodeAddr>")
+//  * display QR code ("qftf-rx:<NodeAddr>")
 //  * listen on the endpoint, waiting for app to supply FT struct
 //  * connect to sender's endpoint, send token
 //  * receive the file over the connection (stream to disk)
@@ -145,7 +145,7 @@ async fn send_file(path: &str) -> Result<()> {
     let svg = code.render::<svg::Color>().min_dimensions(400, 400).build();
 
     let app = app::App::default();
-    let mut wind = Window::new(100, 100, 400, 400, "QFT");
+    let mut wind = Window::new(100, 100, 400, 400, "QFTF");
 
     let mut frame = Frame::default().with_size(400, 400).center_of(&wind);
     let image = SvgImage::from_data(&svg).unwrap();
@@ -234,7 +234,7 @@ async fn receive_file() -> Result<()> {
         .bind()
         .await?;
 
-    //  * display QR code ("qft-rx:<NodeAddr>")
+    //  * display QR code ("qftf-rx:<NodeAddr>")
     let node_addr = endpoint.node_addr().await?;
     let url = format!("{}#{}{}", URL_PREFIX, RX_PREFIX, serde_json::to_string(&node_addr)?);
 
@@ -245,7 +245,7 @@ async fn receive_file() -> Result<()> {
     let svg = code.render::<svg::Color>().min_dimensions(400, 400).build();
 
     let app = app::App::default();
-    let mut wind = Window::new(100, 100, 400, 400, "QFT");
+    let mut wind = Window::new(100, 100, 400, 400, "QFTF");
 
     let mut frame = Frame::default().with_size(400, 400).center_of(&wind);
     let image = SvgImage::from_data(&svg).unwrap();
@@ -327,7 +327,7 @@ async fn receive_file() -> Result<()> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: qft [file]");
+    eprintln!("usage: qftf [file]");
     std::process::exit(2)
 }
 
