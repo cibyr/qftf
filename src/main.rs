@@ -18,6 +18,8 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use qft::*;
 
+const URL_PREFIX: &str = "https://rambunctiousness.com/qft/";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct FileTransfer {
     /// Public key of sender
@@ -135,7 +137,7 @@ async fn send_file(path: &str) -> Result<()> {
 
     println!("Sending {:?}", &transfer);
     let transfer_json = serde_json::to_string(&transfer)?;
-    let url = format!("{}{}", TX_PREFIX, transfer_json);
+    let url = format!("{}#{}{}", URL_PREFIX, TX_PREFIX, transfer_json);
     println!("URL: {}", url);
 
     // Draw the UI
@@ -234,7 +236,7 @@ async fn receive_file() -> Result<()> {
 
     //  * display QR code ("qft-rx:<NodeAddr>")
     let node_addr = endpoint.node_addr().await?;
-    let url = format!("{}{}", RX_PREFIX, serde_json::to_string(&node_addr)?);
+    let url = format!("{}#{}{}", URL_PREFIX, RX_PREFIX, serde_json::to_string(&node_addr)?);
 
     println!("URL: {}", url);
 
