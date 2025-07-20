@@ -87,6 +87,28 @@ async fn copy_from_quinn(
     }
 }
 
+// Draw the UI
+fn show_window(url: &str, title: &str) -> (Window, Frame) {
+    let code = QrCode::new(url).unwrap();
+    let svg = code.render::<svg::Color>().quiet_zone(true).min_dimensions(400, 400).build();
+    let image = SvgImage::from_data(&svg).unwrap();
+    let width = image.width();
+    let height = image.height();
+
+    // let mut wind = Window::new(100, 100, 400, 400, "QFTF");
+    let mut wind = Window::default()
+        .with_size(width, height)
+        .with_label(title);
+
+    let mut frame = Frame::default().with_size(width, height).center_of(&wind);
+    frame.set_image(Some(image));
+
+    wind.end();
+    wind.show();
+
+    (wind, frame)
+}
+
 // The plan:
 // Parse arguments (filename to send, no args to receive)
 // Sender:
@@ -104,7 +126,7 @@ async fn copy_from_quinn(
 //  * receive the file over the connection (stream to disk)
 //    * (maybe) display progress
 //  * (maybe) check hash/CRC?
-// App:
+// Web App:
 //  * Scan both QR codes
 //  * (maybe) display metadata, have go button?
 //  * Connect to receiver, send FT struct
@@ -140,19 +162,9 @@ async fn send_file(path: &str) -> Result<()> {
     let url = format!("{}#{}{}", URL_PREFIX, TX_PREFIX, transfer_json);
     println!("URL: {}", url);
 
-    // Draw the UI
-    let code = QrCode::new(url).unwrap();
-    let svg = code.render::<svg::Color>().min_dimensions(400, 400).build();
-
     let app = app::App::default();
-    let mut wind = Window::new(100, 100, 400, 400, "QFTF");
-
-    let mut frame = Frame::default().with_size(400, 400).center_of(&wind);
-    let image = SvgImage::from_data(&svg).unwrap();
-    frame.set_image(Some(image));
-
-    wind.end();
-    wind.show();
+    let title = format!("QFTF - Sending {}", transfer.name);
+    let (_window, mut frame) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
@@ -240,19 +252,9 @@ async fn receive_file() -> Result<()> {
 
     println!("URL: {}", url);
 
-    // Draw the UI
-    let code = QrCode::new(url).unwrap();
-    let svg = code.render::<svg::Color>().min_dimensions(400, 400).build();
-
     let app = app::App::default();
-    let mut wind = Window::new(100, 100, 400, 400, "QFTF");
-
-    let mut frame = Frame::default().with_size(400, 400).center_of(&wind);
-    let image = SvgImage::from_data(&svg).unwrap();
-    frame.set_image(Some(image));
-
-    wind.end();
-    wind.show();
+    let title = format!("QFTF - Waiting to receive...");
+    let (_window, mut frame) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
