@@ -2,6 +2,7 @@
 name = "qftf"
 version = "0.1.0"
 edition = "2024"
+license = "WTFPL"
 
 [dependencies]
 anyhow = "1.0"
