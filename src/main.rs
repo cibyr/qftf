@@ -165,8 +165,8 @@ async fn send_file(path: &str) -> Result<()> {
     let transfer_json = serde_json::to_string(&transfer)?;
     let env_url = env::var(URL_PREFIX_ENV);
     let url_prefix = env_url.as_deref().unwrap_or(DEFAULT_URL_PREFIX);
-    let url = format!("{}#{}{}", url_prefix, TX_PREFIX, transfer_json);
-    println!("URL: {}", url);
+    let url = format!("{url_prefix}#{TX_PREFIX}{transfer_json}");
+    println!("URL: {url}");
 
     let app = app::App::default();
     let title = format!("QFTF - Sending {}", transfer.name);
@@ -213,10 +213,10 @@ async fn send_file(path: &str) -> Result<()> {
             // Send the file
             let _bytes_sent = copy_with_progress(file, &mut s, |bytes_sent| {
                 let name = transfer.name.clone();
-                let size = transfer.size.clone();
+                let size = transfer.size;
                 async move {
                     progress_sender.send(Progress {
-                        name: name,
+                        name,
                         bytes_sent,
                         total_size: size,
                         finished: false,
@@ -281,10 +281,10 @@ async fn receive_file() -> Result<()> {
         serde_json::to_string(&node_addr)?
     );
 
-    println!("URL: {}", url);
+    println!("URL: {url}");
 
     let app = app::App::default();
-    let title = format!("QFTF - Waiting to receive...");
+    let title = "QFTF - Waiting to receive...".to_string();
     let (mut window, mut frame) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
@@ -329,10 +329,10 @@ async fn receive_file() -> Result<()> {
             let f = File::create_new(&transfer.name).await?;
             copy_with_progress(r, f, |bytes_sent| {
                 let name = transfer.name.clone();
-                let size = transfer.size.clone();
+                let size = transfer.size;
                 async move {
                     progress_sender.send(Progress {
-                        name: name,
+                        name,
                         bytes_sent,
                         total_size: size,
                         finished: false,
