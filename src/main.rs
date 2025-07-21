@@ -18,7 +18,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use qftf::*;
 
-const URL_PREFIX: &str = "https://rambunctiousness.com/qft/";
+const URL_PREFIX: &str = "https://cibyr.github.io/qftf-web/";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FileTransfer {
