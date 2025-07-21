@@ -1,7 +1,10 @@
 use anyhow::Result;
+use fltk::enums::Color;
 use fltk::frame::Frame;
 use fltk::image::SvgImage;
+use fltk::misc::Progress as ProgressBar;
 use fltk::{app, prelude::*, window::Window};
+use human_repr::{HumanCount, HumanDuration, HumanThroughput};
 use iroh::Endpoint;
 use iroh::NodeAddr;
 use iroh::Watcher;
@@ -13,6 +16,7 @@ use std::env;
 use std::future::Future;
 use std::io;
 use std::path::Path;
+use std::time::{Instant, Duration};
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -21,6 +25,7 @@ use qftf::*;
 
 const URL_PREFIX_ENV: &str = "QFTF_URL_PREFIX";
 const DEFAULT_URL_PREFIX: &str = "https://cibyr.github.io/qftf-web/";
+const UPDATE_PERIOD: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FileTransfer {
@@ -88,7 +93,7 @@ where
 }
 
 // Draw the UI
-fn show_window(url: &str, title: &str) -> (Window, Frame) {
+fn show_window(url: &str, title: &str) -> (Window, Frame, ProgressBar) {
     let code = QrCode::new(url).unwrap();
     let svg = code
         .render::<svg::Color>()
@@ -104,10 +109,14 @@ fn show_window(url: &str, title: &str) -> (Window, Frame) {
     let mut frame = Frame::default().with_size(width, height).center_of(&wind);
     frame.set_image(Some(image));
 
+    let mut pb = ProgressBar::default().with_size(width, 20);
+    pb.set_selection_color(Color::Blue);
+    pb.hide();
+
     wind.end();
     wind.show();
 
-    (wind, frame)
+    (wind, frame, pb)
 }
 
 // The plan:
@@ -170,7 +179,7 @@ async fn send_file(path: &str) -> Result<()> {
 
     let app = app::App::default();
     let title = format!("QFTF - Sending {}", transfer.name);
-    let (_window, mut frame) = show_window(&url, &title);
+    let (_window, mut frame, mut pb) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
@@ -240,19 +249,44 @@ async fn send_file(path: &str) -> Result<()> {
         Ok(())
     });
 
+    let mut started = false;
+    let mut start = Instant::now();
+    let mut last_update = start - UPDATE_PERIOD;
     while app.wait() {
         if let Some(progress) = progress_receiver.recv() {
             if progress.finished {
                 app::quit();
                 break;
             }
+            let now = Instant::now();
+            if !started {
+                pb.set_minimum(0.0);
+                pb.set_maximum(progress.total_size as f64);
+                pb.show();
+                start = now;
+                started = true;
+                continue;
+            }
+            pb.set_value(progress.bytes_sent as f64);
+            if now - last_update < UPDATE_PERIOD {
+                continue;
+            }
 
+            let seconds_so_far = (now - start).as_secs_f64();
+            let rate = progress.bytes_sent as f64 / seconds_so_far;
+            let remaining_bytes = progress.total_size - progress.bytes_sent;
+            let remaining_time = Duration::try_from_secs_f64(remaining_bytes as f64 / rate).map(|d| d.human_duration().to_string());
             frame.set_image::<SvgImage>(None);
             frame.set_label(&format!(
                 "Sending {}\n
-                {} / {} bytes",
-                progress.name, progress.bytes_sent, progress.total_size
+                {} / {}\n
+                {} remaining ({})",
+                progress.name, progress.bytes_sent.human_count_bytes(),
+                progress.total_size.human_count_bytes(),
+                remaining_time.as_deref().unwrap_or("forever"),
+                rate.human_throughput_bytes()
             ));
+            last_update = now;
         }
     }
 
@@ -285,7 +319,7 @@ async fn receive_file() -> Result<()> {
 
     let app = app::App::default();
     let title = "QFTF - Waiting to receive...".to_string();
-    let (mut window, mut frame) = show_window(&url, &title);
+    let (mut window, mut frame, _pb) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
