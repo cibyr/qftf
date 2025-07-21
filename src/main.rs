@@ -18,7 +18,8 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use qftf::*;
 
-const URL_PREFIX: &str = "https://cibyr.github.io/qftf-web/";
+const URL_PREFIX_ENV: &str = "QFTF_URL_PREFIX";
+const DEFAULT_URL_PREFIX: &str = "https://cibyr.github.io/qftf-web/";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FileTransfer {
@@ -159,7 +160,9 @@ async fn send_file(path: &str) -> Result<()> {
 
     println!("Sending {:?}", &transfer);
     let transfer_json = serde_json::to_string(&transfer)?;
-    let url = format!("{}#{}{}", URL_PREFIX, TX_PREFIX, transfer_json);
+    let env_url = env::var(URL_PREFIX_ENV);
+    let url_prefix = env_url.as_deref().unwrap_or(DEFAULT_URL_PREFIX);
+    let url = format!("{}#{}{}", url_prefix, TX_PREFIX, transfer_json);
     println!("URL: {}", url);
 
     let app = app::App::default();
@@ -248,7 +251,9 @@ async fn receive_file() -> Result<()> {
 
     //  * display QR code ("qftf-rx:<NodeAddr>")
     let node_addr = endpoint.node_addr().await?;
-    let url = format!("{}#{}{}", URL_PREFIX, RX_PREFIX, serde_json::to_string(&node_addr)?);
+    let env_url = env::var(URL_PREFIX_ENV);
+    let url_prefix = env_url.as_deref().unwrap_or(DEFAULT_URL_PREFIX);
+    let url = format!("{}#{}{}", url_prefix, RX_PREFIX, serde_json::to_string(&node_addr)?);
 
     println!("URL: {}", url);
 
