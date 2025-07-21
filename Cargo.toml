@@ -5,15 +5,13 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-fltk = "^1.4"
-iroh = "0.34"
-iroh-base = "0.34"
-quinn = { version = "0.13", package = "iroh-quinn" }
-qrcode = "0.12"
+fltk = "1.5"
+iroh = "0.90"
+qrcode = "0.14"
 rand = "0.9"
-tokio = "1.44"
+tokio = "1.46"
 tokio-util = "0.7.15"
 tracing = "0.1.41"
-serde_json = "1.0.140"
-serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

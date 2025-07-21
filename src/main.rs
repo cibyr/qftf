@@ -4,8 +4,9 @@ use fltk::image::SvgImage;
 use fltk::{app, prelude::*, window::Window};
 use iroh::Endpoint;
 use iroh::NodeAddr;
-use qrcode::QrCode;
+use iroh::Watcher;
 use qrcode::render::svg;
+use qrcode::QrCode;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -14,7 +15,7 @@ use std::io;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use qftf::*;
 
@@ -37,7 +38,7 @@ struct Progress {
     name: String,
     bytes_sent: u64,
     total_size: u64,
-    finished: bool
+    finished: bool,
 }
 
 /// Copy data from a reader to a writer with progress callbacks
@@ -64,7 +65,7 @@ where
     Fut: Future<Output = ()>,
 {
     let buf_size = 8 * 1024; // Default 8KB buffer
-    // TODO: MaybeUninit buffer
+                             // TODO: MaybeUninit buffer
     let mut buffer = vec![0u8; buf_size];
     let mut total_bytes = 0u64;
 
@@ -75,9 +76,9 @@ where
         }
 
         writer.write_all(&buffer[..bytes_read]).await?;
-        
+
         total_bytes += bytes_read as u64;
-        
+
         // Call the progress callback with the current total
         on_progress(total_bytes).await;
     }
@@ -89,14 +90,16 @@ where
 // Draw the UI
 fn show_window(url: &str, title: &str) -> (Window, Frame) {
     let code = QrCode::new(url).unwrap();
-    let svg = code.render::<svg::Color>().quiet_zone(true).min_dimensions(400, 400).build();
+    let svg = code
+        .render::<svg::Color>()
+        .quiet_zone(true)
+        .min_dimensions(400, 400)
+        .build();
     let image = SvgImage::from_data(&svg).unwrap();
     let width = image.width();
     let height = image.height();
 
-    let mut wind = Window::default()
-        .with_size(width, height)
-        .with_label(title);
+    let mut wind = Window::default().with_size(width, height).with_label(title);
 
     let mut frame = Frame::default().with_size(width, height).center_of(&wind);
     frame.set_image(Some(image));
@@ -148,8 +151,11 @@ async fn send_file(path: &str) -> Result<()> {
     let mut rng = rand::rng();
     rng.fill_bytes(&mut token);
 
+    // Wait for us to have a home relay
+    let _relay_url = endpoint.home_relay().initialized().await?;
+
     let transfer = FileTransfer {
-        node: endpoint.node_addr().await?,
+        node: endpoint.node_addr().initialized().await?,
         name: file_name.to_string_lossy().into_owned(),
         size: file_size,
         token,
@@ -164,7 +170,7 @@ async fn send_file(path: &str) -> Result<()> {
 
     let app = app::App::default();
     let title = format!("QFTF - Sending {}", transfer.name);
-    let (mut window, mut frame) = show_window(&url, &title);
+    let (_window, mut frame) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
@@ -183,7 +189,7 @@ async fn send_file(path: &str) -> Result<()> {
             };
             let remote_node_id = &connection.remote_node_id()?;
             tracing::info!("got connection from {}", remote_node_id);
-            let (s, mut r) = match connection.accept_bi().await {
+            let (mut s, mut r) = match connection.accept_bi().await {
                 Ok(x) => x,
                 Err(cause) => {
                     tracing::warn!("error accepting stream: {}", cause);
@@ -205,7 +211,7 @@ async fn send_file(path: &str) -> Result<()> {
             });
 
             // Send the file
-            let _bytes_sent = copy_with_progress(file, s, |bytes_sent| {
+            let _bytes_sent = copy_with_progress(file, &mut s, |bytes_sent| {
                 let name = transfer.name.clone();
                 let size = transfer.size.clone();
                 async move {
@@ -216,7 +222,10 @@ async fn send_file(path: &str) -> Result<()> {
                         finished: false,
                     });
                 }
-            }).await?;
+            })
+            .await?;
+            s.finish()?;
+            s.stopped().await?;
             tracing::info!("Transfer complete!");
             progress_sender.send(Progress {
                 name: transfer.name,
@@ -239,8 +248,11 @@ async fn send_file(path: &str) -> Result<()> {
             }
 
             frame.set_image::<SvgImage>(None);
-            frame.set_label(&format!("Sending {}\n
-                {} / {} bytes", progress.name, progress.bytes_sent, progress.total_size));
+            frame.set_label(&format!(
+                "Sending {}\n
+                {} / {} bytes",
+                progress.name, progress.bytes_sent, progress.total_size
+            ));
         }
     }
 
@@ -255,11 +267,19 @@ async fn receive_file() -> Result<()> {
         .bind()
         .await?;
 
+    // Wait for us to have a home relay
+    let _relay_url = endpoint.home_relay().initialized().await?;
+
     //  * display QR code ("qftf-rx:<NodeAddr>")
-    let node_addr = endpoint.node_addr().await?;
+    let node_addr = endpoint.node_addr().initialized().await?;
     let env_url = env::var(URL_PREFIX_ENV);
     let url_prefix = env_url.as_deref().unwrap_or(DEFAULT_URL_PREFIX);
-    let url = format!("{}#{}{}", url_prefix, RX_PREFIX, serde_json::to_string(&node_addr)?);
+    let url = format!(
+        "{}#{}{}",
+        url_prefix,
+        RX_PREFIX,
+        serde_json::to_string(&node_addr)?
+    );
 
     println!("URL: {}", url);
 
@@ -318,7 +338,8 @@ async fn receive_file() -> Result<()> {
                         finished: false,
                     });
                 }
-            }).await?;
+            })
+            .await?;
             tracing::info!("Transfer complete!");
             progress_sender.send(Progress {
                 name: transfer.name,
@@ -345,8 +366,11 @@ async fn receive_file() -> Result<()> {
             }
 
             frame.set_image::<SvgImage>(None);
-            frame.set_label(&format!("Receiving {}\n
-                {} / {} bytes", progress.name, progress.bytes_sent, progress.total_size));
+            frame.set_label(&format!(
+                "Receiving {}\n
+                {} / {} bytes",
+                progress.name, progress.bytes_sent, progress.total_size
+            ));
         }
     }
 
