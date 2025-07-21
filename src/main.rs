@@ -4,16 +4,16 @@ use fltk::image::SvgImage;
 use fltk::{app, prelude::*, window::Window};
 use iroh::Endpoint;
 use iroh::NodeAddr;
-use qrcode::render::svg;
 use qrcode::QrCode;
+use qrcode::render::svg;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::path::Path;
+use std::future::Future;
 use std::io;
+use std::path::Path;
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::sync::CancellationToken;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use qftf::*;
@@ -40,52 +40,50 @@ struct Progress {
     finished: bool
 }
 
-/// Copy from a reader to a quinn stream.
+/// Copy data from a reader to a writer with progress callbacks
 ///
-/// Will send a reset to the other side if the operation is cancelled, and fail
-/// with an error.
+/// Similar to `tokio::io::copy`, but calls the provided callback function
+/// whenever a chunk of data is copied, providing the total bytes copied so far.
 ///
-/// Returns the number of bytes copied in case of success.
-async fn copy_to_quinn(
-    mut from: impl AsyncRead + Unpin,
-    mut send: quinn::SendStream,
-    token: CancellationToken,
-) -> io::Result<u64> {
-    tracing::trace!("copying to quinn");
-    tokio::select! {
-        res = tokio::io::copy(&mut from, &mut send) => {
-            let size = res?;
-            send.finish()?;
-            Ok(size)
-        }
-        _ = token.cancelled() => {
-            // send a reset to the other side immediately
-            send.reset(0u8.into()).ok();
-            Err(io::Error::new(io::ErrorKind::Other, "cancelled"))
-        }
-    }
-}
+/// # Parameters
+/// * `reader` - The source implementing AsyncRead
+/// * `writer` - The destination implementing AsyncWrite
+/// * `on_progress` - A callback function that takes the total bytes copied so far
+///
+/// # Returns
+/// The total number of bytes copied
+pub async fn copy_with_progress<R, W, F, Fut>(
+    mut reader: R,
+    mut writer: W,
+    mut on_progress: F,
+) -> io::Result<u64>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    F: FnMut(u64) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let buf_size = 8 * 1024; // Default 8KB buffer
+    // TODO: MaybeUninit buffer
+    let mut buffer = vec![0u8; buf_size];
+    let mut total_bytes = 0u64;
 
-/// Copy from a quinn stream to a writer.
-///
-/// Will send stop to the other side if the operation is cancelled, and fail
-/// with an error.
-///
-/// Returns the number of bytes copied in case of success.
-async fn copy_from_quinn(
-    mut recv: quinn::RecvStream,
-    mut to: impl AsyncWrite + Unpin,
-    token: CancellationToken,
-) -> io::Result<u64> {
-    tokio::select! {
-        res = tokio::io::copy(&mut recv, &mut to) => {
-            Ok(res?)
-        },
-        _ = token.cancelled() => {
-            recv.stop(0u8.into()).ok();
-            Err(io::Error::new(io::ErrorKind::Other, "cancelled"))
+    loop {
+        let bytes_read = reader.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            break;
         }
+
+        writer.write_all(&buffer[..bytes_read]).await?;
+        
+        total_bytes += bytes_read as u64;
+        
+        // Call the progress callback with the current total
+        on_progress(total_bytes).await;
     }
+
+    writer.flush().await?;
+    Ok(total_bytes)
 }
 
 // Draw the UI
@@ -96,7 +94,6 @@ fn show_window(url: &str, title: &str) -> (Window, Frame) {
     let width = image.width();
     let height = image.height();
 
-    // let mut wind = Window::new(100, 100, 400, 400, "QFTF");
     let mut wind = Window::default()
         .with_size(width, height)
         .with_label(title);
@@ -125,7 +122,7 @@ fn show_window(url: &str, title: &str) -> (Window, Frame) {
 //  * listen on the endpoint, waiting for app to supply FT struct
 //  * connect to sender's endpoint, send token
 //  * receive the file over the connection (stream to disk)
-//    * (maybe) display progress
+//    * display progress
 //  * (maybe) check hash/CRC?
 // Web App:
 //  * Scan both QR codes
@@ -167,7 +164,7 @@ async fn send_file(path: &str) -> Result<()> {
 
     let app = app::App::default();
     let title = format!("QFTF - Sending {}", transfer.name);
-    let (_window, mut frame) = show_window(&url, &title);
+    let (mut window, mut frame) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
@@ -208,10 +205,18 @@ async fn send_file(path: &str) -> Result<()> {
             });
 
             // Send the file
-            let token = CancellationToken::new();
-            let _bytes_sent = copy_to_quinn(file, s, token).await?;
-            // TODO: check bytes_sent, get rid of cancellation token?
-            // TODO: progress
+            let _bytes_sent = copy_with_progress(file, s, |bytes_sent| {
+                let name = transfer.name.clone();
+                let size = transfer.size.clone();
+                async move {
+                    progress_sender.send(Progress {
+                        name: name,
+                        bytes_sent,
+                        total_size: size,
+                        finished: false,
+                    });
+                }
+            }).await?;
             tracing::info!("Transfer complete!");
             progress_sender.send(Progress {
                 name: transfer.name,
@@ -234,7 +239,8 @@ async fn send_file(path: &str) -> Result<()> {
             }
 
             frame.set_image::<SvgImage>(None);
-            frame.set_label(&format!("Sending {}...", progress.name));
+            frame.set_label(&format!("Sending {}\n
+                {} / {} bytes", progress.name, progress.bytes_sent, progress.total_size));
         }
     }
 
@@ -259,7 +265,7 @@ async fn receive_file() -> Result<()> {
 
     let app = app::App::default();
     let title = format!("QFTF - Waiting to receive...");
-    let (_window, mut frame) = show_window(&url, &title);
+    let (mut window, mut frame) = show_window(&url, &title);
 
     let (progress_sender, progress_receiver) = app::channel::<Progress>();
 
@@ -300,10 +306,19 @@ async fn receive_file() -> Result<()> {
             s.write_all(&transfer.token).await?;
 
             //  * receive the file over the connection (stream to disk)
-            let token = CancellationToken::new();
             let f = File::create_new(&transfer.name).await?;
-            copy_from_quinn(r, f, token).await?;
-            // TODO: progress
+            copy_with_progress(r, f, |bytes_sent| {
+                let name = transfer.name.clone();
+                let size = transfer.size.clone();
+                async move {
+                    progress_sender.send(Progress {
+                        name: name,
+                        bytes_sent,
+                        total_size: size,
+                        finished: false,
+                    });
+                }
+            }).await?;
             tracing::info!("Transfer complete!");
             progress_sender.send(Progress {
                 name: transfer.name,
@@ -317,15 +332,21 @@ async fn receive_file() -> Result<()> {
         Ok::<(), anyhow::Error>(())
     });
 
+    let mut got_name = false;
     while app.wait() {
         if let Some(progress) = progress_receiver.recv() {
             if progress.finished {
                 app::quit();
                 break;
             }
+            if !got_name {
+                window.set_label(&format!("QFTF - Receiving {}", progress.name));
+                got_name = true;
+            }
 
             frame.set_image::<SvgImage>(None);
-            frame.set_label(&format!("Receiving {}...", progress.name));
+            frame.set_label(&format!("Receiving {}\n
+                {} / {} bytes", progress.name, progress.bytes_sent, progress.total_size));
         }
     }
 
