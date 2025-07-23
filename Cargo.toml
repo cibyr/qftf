@@ -2,6 +2,12 @@
 name = "qftf"
 version = "0.1.0"
 edition = "2024"
+description = "QR code file transfers"
+keywords = ["qrcode", "iroh"]
+categories = ["command-line-utilities"]
+homepage = "https://github.com/cibyr/qftf/"
+repository = "https://github.com/cibyr/qftf/"
+readme = "README.md"
 license = "WTFPL"
 
 [dependencies]
