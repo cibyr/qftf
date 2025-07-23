@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::future::Future;
 use std::io;
+use std::mem::MaybeUninit;
 use std::path::Path;
 use std::time::{Instant, Duration};
 use tokio::fs::File;
@@ -69,19 +70,20 @@ where
     F: FnMut(u64) -> Fut,
     Fut: Future<Output = ()>,
 {
-    let buf_size = 8 * 1024; // Default 8KB buffer
-                             // TODO: MaybeUninit buffer
-    let mut buffer = vec![0u8; buf_size];
+    let buf_size = 8 * 1024; // 8KB buffer
+    let mut buffer = vec![MaybeUninit::uninit(); buf_size];
     let mut total_bytes = 0u64;
 
     loop {
-        let bytes_read = reader.read(&mut buffer).await?;
+        let mut read_buf = tokio::io::ReadBuf::uninit(&mut buffer);
+        reader.read_buf(&mut read_buf).await?;
+        let filled = read_buf.filled();
+        let bytes_read = filled.len();
         if bytes_read == 0 {
             break;
         }
 
-        writer.write_all(&buffer[..bytes_read]).await?;
-
+        writer.write_all(filled).await?;
         total_bytes += bytes_read as u64;
 
         // Call the progress callback with the current total
