@@ -4,13 +4,13 @@ Sometimes you have two computers next to each other and you just want to get a f
 
 ## QR code File TransFer
 
-Because "QFT" was already taken. Uses [iroh](https://www.iroh.computer/) for p2p file transfer between two computers. The two endpoints learn about each other via iroh running in wasm on a web page on your phone [qftf-web](https://github.com/cibyr/qftf-web/). The public keys and other details are encoded in QR codes you scan on your phone, so you don't have to type anything.
+Because "QFT" was already taken. Uses [iroh](https://www.iroh.computer/) for p2p file transfer between two computers. The two endpoints learn about each other via iroh running in wasm on a web page on your phone ([qftf-web](https://github.com/cibyr/qftf-web/)). The public keys and other details are encoded in QR codes you scan on your phone, so you don't have to type anything.
 
 ## Installation
 
-`cargo install qftf`
+`cargo binstall qftf`
 
-TODO: provide pre-built binaries
+Or just grab a binary from the releases page.
 
 ## Usage
 
