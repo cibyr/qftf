@@ -21,18 +21,29 @@ msvc-crt-static = false
 pr-run-mode = "upload"
 
 [dist.dependencies.apt]
-libx11-6 = '*'
-libxinerama1 = '*'
-libxft2 = '*'
-libxext6 = '*'
-libxcursor1 = '*'
-libxrender1 = '*'
-libxfixes3 = '*'
 libcairo2 = '*'
+libfontconfig1 = '*'
+libgl1 = '*'
+libgl1-mesa-dev  = { stage = ["build"] }
+'libglib2.0-0' = '*'
+libglu1-mesa = '*'
+libglu1-mesa-dev  = { stage = ["build"] }
 'libpango-1.0-0' = '*'
+'libpango1.0-dev' = { stage = ["build"] }
 'libpangocairo-1.0-0' = '*'
 'libpangoxft-1.0-0' = '*'
-'libglib2.0-0' = '*'
-libfontconfig1 = '*'
-libglu1-mesa = '*'
-libgl1 = '*'
+libpng-dev  = { stage = ["build"] }
+libx11-6 = '*'
+libx11-dev = { stage = ["build"] }
+libxcursor-dev  = { stage = ["build"] }
+libxcursor1 = '*'
+libxext-dev  = { stage = ["build"] }
+libxext6 = '*'
+libxfixes-dev  = { stage = ["build"] }
+libxfixes3 = '*'
+libxft-dev  = { stage = ["build"] }
+libxft2 = '*'
+libxinerama-dev  = { stage = ["build"] }
+libxinerama1 = '*'
+libxrender-dev  = { stage = ["build"] }
+libxrender1 = '*'
