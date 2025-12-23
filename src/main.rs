@@ -8,8 +8,7 @@ use fltk::misc::Progress as ProgressBar;
 use fltk::{app, prelude::*, window::Window};
 use human_repr::{HumanCount, HumanDuration, HumanThroughput};
 use iroh::Endpoint;
-use iroh::NodeAddr;
-use iroh::Watcher;
+use iroh::EndpointAddr;
 use qrcode::QrCode;
 use qrcode::render::svg;
 use rand::RngCore;
@@ -35,7 +34,7 @@ const UPDATE_PERIOD: Duration = Duration::from_millis(500);
 #[derive(Debug, Serialize, Deserialize)]
 struct FileTransfer {
     /// Public key of sender
-    node: NodeAddr,
+    addr: EndpointAddr,
     /// Name of the file to transfer
     name: String,
     /// File size in bytes
@@ -209,7 +208,7 @@ impl UI {
 //  * (maybe) append some kind of hash or CRC?
 // Receiver:
 //  * create endpoint
-//  * display QR code ("qftf-rx:<NodeAddr>")
+//  * display QR code ("qftf-rx:<EndpointAddr>")
 //  * listen on the endpoint, waiting for app to supply FT struct
 //  * connect to sender's endpoint, send token
 //  * receive the file over the connection (stream to disk)
@@ -240,10 +239,10 @@ async fn send_file(path: &str) -> Result<()> {
     rng.fill_bytes(&mut token);
 
     // Wait for us to have a home relay
-    let _relay_url = endpoint.home_relay().initialized().await?;
+    endpoint.online().await;
 
     let transfer = FileTransfer {
-        node: endpoint.node_addr().initialized().await?,
+        addr: endpoint.addr(),
         name: file_name.to_string_lossy().into_owned(),
         size: file_size,
         token,
@@ -274,8 +273,8 @@ async fn send_file(path: &str) -> Result<()> {
                     continue;
                 }
             };
-            let remote_node_id = &connection.remote_node_id()?;
-            info!("got connection from {}", remote_node_id);
+            let remote_id = &connection.remote_id();
+            info!("got connection from {}", remote_id);
             let (mut s, mut r) = match connection.accept_bi().await {
                 Ok(x) => x,
                 Err(cause) => {
@@ -284,7 +283,7 @@ async fn send_file(path: &str) -> Result<()> {
                     continue;
                 }
             };
-            info!("accepted stream from {}", remote_node_id);
+            info!("accepted stream from {}", remote_id);
             // read the token and verify it
             let mut buf = [0u8; 8];
             r.read_exact(&mut buf).await?;
@@ -341,17 +340,17 @@ async fn receive_file() -> Result<()> {
         .await?;
 
     // Wait for us to have a home relay
-    let _relay_url = endpoint.home_relay().initialized().await?;
+    endpoint.online().await;
 
-    //  * display QR code ("qftf-rx:<NodeAddr>")
-    let node_addr = endpoint.node_addr().initialized().await?;
+    //  * display QR code ("qftf-rx:<EndpointAddr>")
+    let addr = endpoint.addr();
     let env_url = env::var(URL_PREFIX_ENV);
     let url_prefix = env_url.as_deref().unwrap_or(DEFAULT_URL_PREFIX);
     let url = format!(
         "{}#{}{}",
         url_prefix,
         RX_PREFIX,
-        serde_json::to_string(&node_addr)?
+        serde_json::to_string(&addr)?
     );
 
     println!("URL: {url}");
@@ -375,8 +374,8 @@ async fn receive_file() -> Result<()> {
                     continue;
                 }
             };
-            let remote_node_id = &connection.remote_node_id()?;
-            info!("got connection from {}", remote_node_id);
+            let remote_id = &connection.remote_id();
+            info!("got connection from {}", remote_id);
             let mut rs = match connection.accept_uni().await {
                 Ok(x) => x,
                 Err(cause) => {
@@ -385,14 +384,14 @@ async fn receive_file() -> Result<()> {
                     continue;
                 }
             };
-            info!("accepted stream from {}", remote_node_id);
+            info!("accepted stream from {}", remote_id);
             // read tx json
             let tx_json = rs.read_to_end(MAX_QR_BYTES).await?;
             let tx_json = String::from_utf8(tx_json)?;
             let transfer: FileTransfer = serde_json::from_str(&tx_json)?;
 
             //  * connect to sender's endpoint, send token
-            let connection = endpoint.connect(transfer.node, ALPN).await?;
+            let connection = endpoint.connect(transfer.addr, ALPN).await?;
             info!("Connected!");
             let (mut s, r) = connection.open_bi().await?;
             s.write_all(&transfer.token).await?;

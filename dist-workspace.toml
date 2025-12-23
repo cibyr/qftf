@@ -15,10 +15,8 @@ targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
-# fltk-fs talked about big game about being "self-contained" but it doesn't like statically linking the CRT
+# fltk-fs talks a big game about being "self-contained" but it doesn't like statically linking the CRT
 msvc-crt-static = false
-# While trying to get the CI config right
-pr-run-mode = "upload"
 
 [dist.dependencies.apt]
 libcairo2 = '*'
