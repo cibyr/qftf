@@ -9,9 +9,10 @@ use fltk::{app, prelude::*, window::Window};
 use human_repr::{HumanCount, HumanDuration, HumanThroughput};
 use iroh::Endpoint;
 use iroh::EndpointAddr;
+use iroh::endpoint::presets;
 use qrcode::QrCode;
 use qrcode::render::svg;
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::future::Future;
@@ -101,6 +102,14 @@ where
 
     writer.flush().await?;
     Ok(total_bytes)
+}
+
+/// Drive an incoming connection through the iroh 1.0 accept handshake.
+///
+/// `Endpoint::accept` yields an `Incoming`; we must explicitly accept it and
+/// then await the handshake to obtain a `Connection`.
+async fn accept_connection(incoming: iroh::endpoint::Incoming) -> Result<iroh::endpoint::Connection> {
+    Ok(incoming.accept()?.await?)
 }
 
 struct UI {
@@ -222,7 +231,7 @@ impl UI {
 async fn send_file(path: &str) -> Result<()> {
     // Create an endpoint, it allows creating and accepting
     // connections in the iroh p2p world
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .bind()
         .await?;
@@ -262,10 +271,10 @@ async fn send_file(path: &str) -> Result<()> {
 
     tokio::spawn(async move {
         loop {
-            let Some(connecting) = endpoint.accept().await else {
+            let Some(incoming) = endpoint.accept().await else {
                 break;
             };
-            let connection = match connecting.await {
+            let connection = match accept_connection(incoming).await {
                 Ok(connection) => connection,
                 Err(cause) => {
                     warn!("error accepting connection: {}", cause);
@@ -334,7 +343,7 @@ async fn send_file(path: &str) -> Result<()> {
 
 async fn receive_file() -> Result<()> {
     //  * create endpoint
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .bind()
         .await?;
@@ -363,10 +372,10 @@ async fn receive_file() -> Result<()> {
     tokio::spawn(async move {
         loop {
             //  * listen on the endpoint, waiting for app to supply FT struct
-            let Some(connecting) = endpoint.accept().await else {
+            let Some(incoming) = endpoint.accept().await else {
                 break;
             };
-            let connection = match connecting.await {
+            let connection = match accept_connection(incoming).await {
                 Ok(connection) => connection,
                 Err(cause) => {
                     warn!("error accepting connection: {}", cause);
@@ -447,5 +456,56 @@ async fn main() -> Result<()> {
         1 => receive_file().await,
         2 => send_file(&args[1]).await,
         _ => usage(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iroh::{EndpointAddr, SecretKey};
+
+    #[tokio::test]
+    async fn copy_with_progress_copies_all_bytes_and_reports_progress() {
+        let data: Vec<u8> = (0..50_000u32).map(|i| i as u8).collect();
+        let mut output = Vec::new();
+        let mut updates = Vec::new();
+
+        let copied = copy_with_progress(&data[..], &mut output, |total| {
+            updates.push(total);
+            async {}
+        })
+        .await
+        .unwrap();
+
+        // All bytes copied, output is byte-identical to the input.
+        assert_eq!(copied, data.len() as u64);
+        assert_eq!(output, data);
+
+        // The input is larger than the 8KB buffer, so progress is reported in
+        // multiple chunks that increase monotonically and end at the total.
+        assert!(updates.len() > 1, "expected multiple progress updates");
+        assert!(updates.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(*updates.last().unwrap(), data.len() as u64);
+    }
+
+    #[test]
+    fn file_transfer_json_round_trips() {
+        // Pins the wire format shared with qft-web: serializing then
+        // deserializing a FileTransfer must yield an identical struct.
+        let id = SecretKey::generate().public();
+        let transfer = FileTransfer {
+            addr: EndpointAddr::new(id),
+            name: "example.txt".to_string(),
+            size: 12345,
+            token: [1, 2, 3, 4, 5, 6, 7, 8],
+        };
+
+        let json = serde_json::to_string(&transfer).unwrap();
+        let parsed: FileTransfer = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.addr, transfer.addr);
+        assert_eq!(parsed.name, transfer.name);
+        assert_eq!(parsed.size, transfer.size);
+        assert_eq!(parsed.token, transfer.token);
     }
 }
